@@ -1,44 +1,110 @@
 Require Import List.
 Require Import MSets Arith.
 Require Import Coq.Numbers.NaryFunctions.
-Import ListNotations.
-
+From Template Require Import All.
+Import ListNotations MonadNotation.
+Require Export Coq.Strings.String.
+Require Import Ascii.
 Extraction Language Haskell.
 
-Inductive Ind (A : Type) (n : nat) : Type :=
-{
-  initial : A;
-  arity : list (sigT (fun t => Ind t n) * sigT (fun t => t)) % type
-}.
+Definition printInductive (name  : ident): TemplateMonad unit :=
+  (tmBind (tmQuoteInductive name) tmPrint).
 
-Check flat_map.
-Compute list_power [1;2;3] [4;5].
-Fixpoint IndNat (n : nat) : Ind nat := 
-{| initial := 0;  
-   arity := [
-    (existT (fun t => Ind t) (nat) (IndNat 0), existT (fun t => t) (nat -> nat) S)
-  ]
-|}.
+Run TemplateProgram (t <- tmQuoteInductive "nat";; tmPrint t).
+Run TemplateProgram (r <- tmQuote nat;; tmPrint r).
 
-Instance IndProd {A B : Set} `{Ind A} `{Ind B} : Ind (prod A B)  := 
-{
-  initial := (initial, initial);
-  arity := 
-  let indA := arity in 
-  let indB := arity in 
+
+Inductive a : Type := 
+| A : a.
+
+Inductive b : Type := 
+| B : b
+| Ba : a -> b
+| Baa : a -> b -> b.
+
+Run TemplateProgram (t <- tmQuoteInductive "b";; tmPrint t).
+
+Run TemplateProgram (t<- (tmQuote (nat -> nat));; t <- tmUnquoteTyped Set t;; tmPrint t).
+
+Definition str_eq s1 s2 := match string_dec s1 s2 with left _ => true | _ => false end. 
+Definition ascii_eq c1 c2 := match ascii_dec c1 c2 with left _ => true | _ => false end. 
+
+Fixpoint map_ {A B} (f : A -> TemplateMonad B) (l : list A) : TemplateMonad (list B) :=
+match l with 
+| [] => tmReturn []
+| x::xs => r <- f x ;; rs <- map_ f xs ;; tmReturn (r::rs)
+end.
+
+Fixpoint split_until (f : ascii -> bool) s :=
+match s with 
+| EmptyString => (EmptyString, EmptyString)
+| String c xs => 
+  if f c then (String c EmptyString, xs)
+  else
+  let (a,b) := split_until f xs in 
+  (String c a,b)
+end.
+
+Compute split_until (ascii_eq ".") "fd.a".
+Fixpoint strip s dummy {struct dummy} := 
+let (a,b) := split_until (ascii_eq ".") s in
+match b with 
+| EmptyString => s
+| _ => match dummy with 
+  | 0 => EmptyString
+  | S n' => strip b n'
+  end
+end.
+
+Compute strip "Coq.Init.Datatypes.nat" 100.
+ 
+Check fold_left.
+
+Fixpoint enumerate (ind : Type) (n : nat) : TemplateMonad (list ind) := 
+tm <- tmQuote ind;; match tm with 
+| tInd ind' _ => 
+let qualified := inductive_mind ind' in
+let indName := strip qualified (length qualified) in
+decl <- tmQuoteInductive indName ;;
+indBody <- 
+  match find (fun body => str_eq (ind_name body) indName) (ind_bodies decl) with 
+  | Some e => tmReturn e
+  | _ => tmFail (append "fail" indName)
+  end;;
+let find_base := (fun body => 
+  let cstrs := ind_ctors body in 
+  filter (fun cstr => match cstr with (_,_,0) => true | _ => false end) cstrs)
+in
+let find_ind := 
+  (fun body => 
+  let cstrs := ind_ctors body in 
+  filter (fun cstr => match cstr with (_,_,0) => false | _ => true end) cstrs)
+in 
+(match n with 
+| 0 => map_ (fun cstr => match cstr with (tn,_,_) => tmUnquoteTyped ind (tConstruct (mkInd indName 0) 0 [])  end) 
+    (find_base indBody)
+| S n' => 
+  let cstrs := find_ind indBody in 
+  let flatten := fix f tm' := 
+    match tm' with 
+    | tRel _ => [tm]
+    | tInd ind _ => tm'
+    | tProd _ tm1 tm2 => f tm1 ++ f tm2
+    end
+  in
+  let get_args l := removelast (flatten l) in
+  map_ (fun acc cstr => match cstr with 
+    | (name, tm, arity) => 
+      all_args <- map_ (fun arg => ty <- tmUnquote arg;; enumerate (projT2 ty) n') (get_args tm);;
+      let combined := map (fun args => 
+          
+    end) cstrs 
+end)
+| _ => tmFail "non inductive type"
+end.
   
-  flat_map (fun c1 : {x : Type & x} => map (fun c2 : {x : Type & x} => 
-      existT (fun t => t) (prod (projT1 c1) (projT1 c2)) (projT2 c1, projT2 c2)
-  ) indB) indA
-}. 
-
-Fixpoint enumerate {A : Type} `{Ind A} (n : nat ) : list A := 
-let indA := arity in 
-let f := 
-  fix pay n acc := 
-    if n =? 0 then acc
-    else   
-  
+Check enumerate.
+Run TemplateProgram (r <- enumerate nat 0;; tmPrint r).
 
 Class Eq A :=
   {
