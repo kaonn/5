@@ -7,8 +7,8 @@ Require Export Coq.Strings.String.
 Require Import Ascii.
 Extraction Language Haskell.
 Require Import FMaps.
-Require Import ExtLib.Data.HList.
 
+Require Import DepList.
 
 Definition printInductive (name  : ident): TemplateMonad unit :=
   (tmBind (tmQuoteInductive name) tmPrint).
@@ -17,13 +17,14 @@ Run TemplateProgram (t <- tmQuoteInductive "nat";; tmPrint t).
 Run TemplateProgram (r <- tmQuote nat;; tmPrint r).
 
 
-Inductive a : Type := 
-| A : a.
+Definition split_i {X : Type} (i : nat) (l : list X) := (firstn i l, skipn i l).
 
-Inductive b : Type := 
-| B : b
-| Ba : a -> b
-| Baa : a -> b -> b.
+Fixpoint tabulate_list {X : Type} (f : nat -> X) n : List.list X := 
+match n with 
+| 0 => []
+| S n => List.cons (f n) (tabulate_list f n)
+end.
+
 
 Inductive prod3 (A B C : Type) : Type := 
 pair3 : A -> B -> prod3 A B C
@@ -49,127 +50,304 @@ Definition ss (sn : snat) : snat := fun x f => f (inr (sn x f)).
 
 Definition list' := rec (fun X A => sum unit (prod A X)).
 
-
-Goal ss szero = sone.
-Proof.
-compute. reflexivity.
-Qed.
-
-Check (fun t1 t2 => prod (list t1) (list (list t2))).
-Inductive TyOp : Type := 
-| tfunctor : forall (F : Type -> Type), TyOp
-| tprod : TyOp -> TyOp -> TyOp
-| tsum : TyOp -> TyOp -> TyOp.
-
-
-
-Section var.
-Variable var : (Type -> Type) -> Type.
-
-
-Inductive Species : (Type -> Type) -> Type := 
-| zero : Species (fun _ => Empty_set)
-| one : Species (fun x => unit)
-| singleton : Species (fun x => x)
-| cprod : forall {F G}, Species F -> Species G -> Species (fun x => prod (F x) (G x))
-| ssum : forall {F G}, Species F -> Species G -> Species (fun x => sum (F x) (G x))
-| srec : forall F, (forall A, (var (F A) -> Species (F A))) -> Species (rec F)
-| svar : forall F, var F -> Species F.
-End var.
-
-Check Species.
-
 Definition var1 := fun _ : Type -> Type => unit.
-Definition F1 := (fun A X => sum unit (prod A X)).
+
 Definition Id := fun X : Type => X.
 
+Inductive tlist : list Type -> Type :=
+| Hnil : tlist nil
+| Hcons : forall (T : Type) {TS}, list T -> tlist TS -> tlist (T :: TS).
 
-Definition s1 := (srec var1 F1 (fun A v => ssum var1 (one var1) (cprod var1 (singleton var1) (svar var1 Id v)))).
+Check Hcons nat [1;2;3] Hnil.
 
-Definition split_i {X : Type} (i : nat) (l : list X) := (firstn i l, skipn i l).
+Check HFirst.
 
-Fixpoint tabulate_list {X : Type} (f : nat -> X) n := 
-match n with 
-| 0 => []
-| S n => cons (f n) (tabulate_list f n)
-end.
+Check sigT.
+Check sigT list.
+Check existT list nat [1;2].
 
-Check 4::[].
-
-Definition varType n' n bound (T1 T2 : Type) : Type := 
-match existsb (fun e => e =? n') bound with 
-  | false => T1
-  | _ => 
-    match n' =? n with 
-    | true => T2
-    | _ => T1
-    end
+Definition tget' T TS : member T TS  -> Type := fun _ => T.
+Fixpoint tget {TS : list Type} {T} (hs : tlist TS)
+: member T TS ->  list T :=
+  match hs in tlist TS return member T TS -> list T with
+    | Hnil =>
+      fun x => match x in member _ Z return match Z with
+                                           | nil => list T
+                                           | _ :: _ => Type * list unit
+                                         end
+               with
+                 | HFirst => (unit, [tt])
+                 | HNext _ _ _ => (unit, [tt])
+               end
+    | Hcons T' x hs =>
+      fun m => match m in member _ Z
+                     return match Z with
+                              | nil => list T
+                              | x :: y => list x -> (member T y -> list T) -> list T
+                            end
+               with
+                 | HFirst => fun x' _ => x'
+                 | HNext _ _ m' => fun _ f => f m'
+               end x (@tget _ T hs)
   end.
 
-Definition varExp {T1 T2} n' n bound (E1 : T1) (E2 : T2) : varType n' n bound T1 T2 :=
-match existsb (fun e => e =? n') bound as r return 
-match r with 
-|false => T1
-| _ => match n' =? n with 
-        | true => T2
-        | _ => T1 end
-end
-with 
-  | false => E1
-  | _ => 
-    match n' =? n as r' return 
-    match r' with 
-    | true => T2
-    | _ => T1
-    end
-   with 
-    | true => E2
-    | _ => E1
-    end
-  end.
+Definition h1 := Hcons string ["a";"b";"c"] (Hcons nat [1;2;3] Hnil).
+Definition i1 : member string [string;nat] := HFirst.
+Check i1.
+Compute tget h1 i1.
 
-Fixpoint squash var T (s : Species (Species var) T) : Species var T :=
-match s with 
-| zero _ => zero _
-| one _ => one _
-| singleton _ _ => singleton _ _
-| cprod _ T1 T2 => cprod _ (squash var _ T1) (squash var _ T2)
-| ssum _ T1 T2 => ssum _ (squash var _ T1) (squash var _ T2)
-| srec _ F f => srec _ F (fun A v => squash var _ (f A (svar var (F A) v)))
-| svar _ F v => v
+Definition Nfunctor := list Type -> Type.
+
+Definition nrec (F : Type -> Type): Type := forall X, (F X-> X) -> X.
+
+Definition rfold F  : forall X, (F X -> X) -> (nrec F) -> X := 
+fun X k t => t X k.
+
+Class Functor (F : Type -> Type) : Type := 
+{
+   liftF : forall {X Y}, (X -> Y) -> (F X -> F Y)
+}.
+
+Instance Maybe : Functor (fun X => sum unit X) :=
+{
+  liftF := fun X Y => fun f => fun x => 
+  match x with 
+  | inl tt => inl tt
+  | inr y => inr (f y)
+  end
+}.
+
+Definition rin F `{Functor (F)} : F (nrec F) -> nrec F :=
+fun s => fun X k => k ((liftF (rfold F X k)) s). 
+
+Definition rout F `{Functor (F)} : nrec F -> F (nrec F) :=
+rfold F (F (nrec F)) (liftF (rin F )).
+
+Section s.
+Variable ts : list Type.
+Inductive Species : list Type -> Type -> Type := 
+| zero : forall C, Species C (Empty_set)
+| one :  forall C {x} (m : member x ts), Species C ( unit)
+| singleton :  forall C {x} (m : member x ts), Species C ( tget' _ ts m)
+| cprod : forall C {F G}, Species C F -> Species C G -> Species C ( prod F G)
+| pprod : forall C {F G}, Species C F -> Species C G -> Species C ( prod F G)
+| ssum : forall C {F G}, Species C F -> Species C G -> Species C (sum F G)
+| srec : forall C F `{Functor (F)}, Species ((nrec F)::C) (F (nrec F)) -> 
+  Species C (nrec F) 
+| svar : forall C F, member F C -> Species C F.
+End s.
+
+Fixpoint insertAt A (t : A) (G : list A) (n : nat) {struct n} : list A :=
+match n with
+| O => t :: G
+| S n' => match G with
+| nil => t :: G 
+| t' :: G' => t' :: insertAt A t G' n'
+end
 end.
 
-Definition Species1 (t1 t2 : Type -> Type) := forall v, v t1 -> Species v t2.
-
-Definition Subst {var} (t1 t2 : Type -> Type) (T : Species1 t1 t2) (T' : Species var t1) : Species var t2 :=  
-squash var _ (T (Species var) T').
-
-Fixpoint enumerate A S s labels := 
-let fix enum (A : Type) {var} {S : Type -> Type} (s : Species var S) (labels : list A) : list (S A) := 
-match s with
-| zero _ => []
-| (one _) => match labels with [] => [tt ] | _ => [] end
-| singleton _ => match labels with [x] => [x] | _ => [] end
-| cprod _  s1 s2 => 
-  let all_splits := map (fun i => split_i i labels) (tabulate_list (fun i => i) (List.length labels)) in 
-  concat (map (fun e => match e with (l,r) => list_prod (enum A s1 l) (enum A s2 r) end) all_splits)
-| ssum _ s1 s2 => app (map inl (enum A s1 labels)) (map inr (enum A s2 labels))
-| srec _ F f => 
-  let body := Subst _ _ (f A) s 
-  in enum A (F A) body labels
-| svar _ F v => []
-end
-in 
-enum A S s labels.
-
-Compute enumerate nat (rec (fun t => t) (fun x =>
+Fixpoint liftVar A t G (x : member t G) t' n : member t (insertAt A t' G n) :=
 match x with
-| interp F => ssum one (cprod singleton (var F))
-end)) [1;2]. 
+| HFirst => match n return member t (insertAt A t' (t :: _) n) with
+| O => HNext t' (t::_) HFirst
+| _ => HFirst
+end
+| HNext t'' G'' x' => 
+match n return member t (insertAt A t' (t''::G'') n) with
+| O => HNext _ _ (HNext _ _ x')
+| S n' => HNext _ _ (liftVar A _ _ x' t' n')
+end
+end.
 
-Compute enumerate nat (cprod (ssum singleton singleton) (ssum singleton singleton)) [1;2].
+Fixpoint lift' k C t' n t (s : Species k C t) : Species k (insertAt _ t' C n) t := 
+match s with 
+| zero _ C => zero _ (insertAt _ t' C n)
+| one _ C i => one _ (insertAt _ t' C n) i
+| singleton _ C _ => singleton _ (insertAt _ t' C n) _
+| cprod _ C S1 S2 => cprod _ (insertAt _ t' C n) (lift' k C t' n _ S1) (lift' k C t' n _ S2)
+| pprod _ C S1 S2 => pprod _ (insertAt _ t' C n) (lift' k C t' n _ S1) (lift' k C t' n _ S2)
+| ssum _ C S1 S2 => ssum _ (insertAt _ t' C n) (lift' k C t' n _ S1) (lift' k C t' n _ S2)
+| srec _ C F S' => srec _ (insertAt _ t' C n) F (lift' k _ t' (S n) _ S')
+| svar _ C F x => svar _ _ _ (liftVar _ _ _ x t' n)
+end.
 
-Print list.
+Definition lift k C t' t (e : Species k C t) : Species k (t' :: C) t := lift' k C t' O t e.
+
+Check hmap.
+Fixpoint subst {k} C t (s : Species k C t) C' : hlist (Species k C') C -> Species k C' t :=
+match s with 
+| zero _ C => fun _ => zero _ _
+| one _ C i => fun _ => one _ _ i
+| singleton _ C _ => fun _ => singleton _ _ _
+| cprod _ C S1 S2 => fun s =>  cprod _ _ (subst C _ S1 _ s) (subst C _ S2 _ s)
+| pprod _ C S1 S2 => fun s =>  pprod _ _ (subst C _ S1 _ s) (subst C _ S2 _ s)
+| ssum _ C S1 S2 => fun s => ssum _ _ (subst C _ S1 _ s) (subst C _ S2 _ s)
+| srec _ _ F S' => fun s => srec _ _ F (subst _ _ S' _ (svar _ (_::C') _ (HFirst) ::: hmap (fun f =>  lift k C' _ f) s))
+| svar _ C F x => fun s => hget s x
+end.
+
+Check hlist.
+
+Check member.
+
+Fixpoint convert {n A} (l : ilist A n) : list (fin n) := [].
+
+(*fun tls h => 
+  let C'' := nrec ts F :: C' in 
+  let s'' := subst C'' _ s' C' (HCons s h) in 
+  enum s'' tls*)
+Check concat.
+Compute list_prod [1;2;3] [5;6].
+
+
+Fixpoint part {T} (ls : list T) :=
+match ls with
+| [] => [([],[])]
+| x::xs => 
+  let r := part xs in 
+  let add_l := fun p => match p with (l,r) => (x::l,r) end in
+  let add_r := fun p => match p with (l,r) => (l,x::r) end in
+  List.app (map add_l r) (map add_r r)
+end.
+
+Compute part [1;2;3].
+Fixpoint partition {ts} (tls : tlist ts) : list (tlist ts * tlist ts) :=
+match tls with 
+| Hnil => [(Hnil,Hnil)]
+| Hcons T ls tls' => 
+  let tlspart := partition tls' in 
+  let lpart := part ls in 
+  concat (map (fun tlp => match tlp with 
+  (l,r) => map (fun p => match p with (l',r') => (Hcons T l' l, Hcons T r' r) end) lpart 
+  end) tlspart)
+end.
+
+Check list_prod.
+
+Definition enumerate (n : nat) {ts : list Type} {F} {K} (s : Species ts K F) : 
+forall tls : tlist ts, hlist (Species ts K) K -> list (F). 
+refine(
+(fix enum n {ts : list Type} {F} {K} (s : Species ts K F) : forall tls : tlist ts, hlist (Species ts K) K -> list (F) := 
+match n with 
+| 0 => fun _ _ => []
+| S n' => 
+match s in Species _ KK F return forall (s : Species _ KK F) (tls : tlist ts), hlist (Species ts KK) KK -> list (F) with
+| zero _ C => fun _ tls _ => []
+| one _ _ m => fun _ tls _ => 
+  match tget tls m with [] => [tt] | _ => [] end
+| singleton _ _ m => fun _ tls _ => 
+  match tget' _ ts m with 
+  | T => match tget tls m in list _ return list T with 
+      | ls => match ls with [x] => [x] | _ => [] end
+      end
+  end
+| pprod _ C' s1 s2 => fun _ tls _ => 
+  let parts : list (tlist ts * tlist ts) := partition tls in 
+   concat (map (fun part => match part with (l,r) => list_prod (enum n' s1 l _) (enum n' s2 r _) end) parts)
+| cprod _ _ s1 s2 => fun _ tls _ => list_prod (enum n' s1 tls _) (enum n' s2 tls _)
+| ssum _ _ s1 s2 => fun _ tls  _ => app (map inl (enum n' s1 tls _)) (map inr (enum n' s2 tls _))
+| srec _ C' F s' => _
+| svar _ _ F v => fun _ tst _ => []
+end s
+end) n ts F K s).
+- exact h.
+- exact h.
+- exact h.
+- exact h.
+- exact h. 
+- exact h.  
+- intros.
+  pose ( C'' := nrec F :: C').
+  pose (s'' := subst C'' _ s' C' (HCons s1 X)).
+  pose (r := enum n' _ _ _  s'' tls X).
+  exact (map (rin _  ) r).
+Defined.
+
+Definition ts : list Type := [nat : Type].
+Definition F1 := (fun X => sum unit (prod (tget' _ ts HFirst) X)).
+Instance F1F : Functor F1 := 
+{
+  liftF := fun X Y f x => 
+  match x with 
+  | inl tt => inl tt
+  | inr (a,x') => inr (a, f x')
+  end
+}.
+Definition C1 := [nrec F1].
+Definition s := srec ts []  F1 (ssum ts C1 (one ts C1 HFirst) (pprod ts C1 (singleton ts C1 HFirst) (svar ts C1 (nrec F1) (HFirst)))).
+Definition tls : tlist ts := Hcons nat [1;2;3] Hnil.
+Definition C0 : hlist (Species ts []) [] := HNil.
+
+Compute enumerate 100 s tls C0.
+
+Definition ts2 : list Type := [nat : Type; string : Type].
+Definition tls2 : tlist ts2 := Hcons nat [1;2] (Hcons string ["a";"b";"c"] Hnil).
+Definition s2 := pprod ts2 [] (ssum ts2 [] (singleton ts2 [] HFirst) (singleton ts2 [] (HNext nat [string] HFirst))) (singleton ts2 [] HFirst).
+Definition C2 : hlist (Species ts2 []) [] := HNil.
+Compute enumerate 100 s2 tls2 C2.
+Compute (List.length (enumerate 3 s2 tls2 C2)).
+
+Definition rlistF A := (fun X => sum unit (prod A X)).
+Instance rlistFF : forall A, Functor (rlistF A) :=
+{
+  liftF := fun X Y f m => 
+   match m with 
+   | inl tt => inl tt
+   | inr (a,x) => inr (a, f x)
+   end
+}.
+Definition rlist A := nrec (rlistF A).
+Check @liftF.
+Definition sizet {A} (m : A) := 0.
+Definition rnil {A} : rlist A := fun X f => f (inl tt).
+Definition rcons {A} (a : A) (l : rlist A) : rlist A := fun X f => f (inr (a, l X f)).
+Definition l1 := rcons nat (rcons string rnil).
+Fixpoint k  {X Y : Type} (f : X -> Y) (m : rlist X) (d : nat)  : rlist Y :=
+  match d with 
+  | 0 => rnil
+  | S d' => 
+  let out := rout (rlistF X) m in
+  match out with
+  | inl tt => rin (rlistF Y) (inl tt)
+  | inr (a, x) => rin (rlistF Y) (inr (f a, k f x d'))
+  end
+  end.
+
+Compute k (fun X => sum unit X) l1 100.
+
+Instance ListF : Functor (rlist) := 
+{
+  liftF := fun X Y f m => 
+  let out := rout (rlistF X) m in
+  match out with
+  | inl tt => rin (rlistF Y) (inl tt)
+  | inr (a, x) => rin (rlistF Y) (inr (f a, k f x 1000))
+  end
+}.
+
+Definition F3 := (fun X => sum unit (prod (tget' _ ts HFirst) (rlist X))).
+Instance F3F : Functor F3 := 
+{
+  liftF := fun X Y f x => 
+  match x with 
+  | inl tt => inl tt
+  | inr (a, xl) => inr (a, liftF f xl)
+  end
+}.
+Definition C3 := [nrec F3].
+Definition C3' := [rlist (nrec F3) ;nrec F3].
+Definition ts3 : list Type := [nat : Type].
+Definition tls3 : tlist ts3 := Hcons nat [1;2;3] Hnil.
+Definition t : member (nrec F3) C3' := HNext _ _ HFirst.
+Definition s3 := srec ts3 []  F3 (ssum ts3 C3 (one ts3 C3 (HFirst)) 
+  (pprod ts3 C3 (singleton ts3 C3 HFirst) 
+    (srec ts3 C3 (rlistF (nrec F3)) (ssum ts3 C3' (one ts3 C3' HFirst) (pprod ts3 C3' ((svar ts3 C3' (nrec F3) (t))) ((svar ts3 C3' (rlist (nrec F3)) HFirst)) ) ) )
+  )).
+
+Definition Empty : hlist (Species ts3 []) [] := HNil.
+Compute enumerate 20 s3 tls3 Empty. 
+Compute (List.length (enumerate 20 s3 tls3 Empty)).
+
 
 Run TemplateProgram (t <- tmQuoteRec (list nat);; r <- tmEval all t;; tmPrint r).
 
