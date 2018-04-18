@@ -263,6 +263,8 @@ end) n ts F K s).
   exact (map (rin _  ) r).
 Defined.
 
+(* lists *)
+
 Definition ts : list Type := [nat : Type].
 Definition F1 := (fun X => sum unit (prod (tget' _ ts HFirst) X)).
 Instance F1F : Functor F1 := 
@@ -280,6 +282,7 @@ Definition C0 : hlist (Species ts []) [] := HNil.
 
 Compute enumerate 100 s tls C0.
 
+(* multi-sorted product *)
 Definition ts2 : list Type := [nat : Type; string : Type].
 Definition tls2 : tlist ts2 := Hcons nat [1;2] (Hcons string ["a";"b";"c"] Hnil).
 Definition s2 := pprod ts2 [] (ssum ts2 [] (singleton ts2 [] HFirst) (singleton ts2 [] (HNext nat [string] HFirst))) (singleton ts2 [] HFirst).
@@ -287,6 +290,7 @@ Definition C2 : hlist (Species ts2 []) [] := HNil.
 Compute enumerate 100 s2 tls2 C2.
 Compute (List.length (enumerate 3 s2 tls2 C2)).
 
+(* rose trees *)
 Definition rlistF A := (fun X => sum unit (prod A X)).
 Instance rlistFF : forall A, Functor (rlistF A) :=
 {
@@ -337,7 +341,7 @@ Instance F3F : Functor F3 :=
 Definition C3 := [nrec F3].
 Definition C3' := [rlist (nrec F3) ;nrec F3].
 Definition ts3 : list Type := [nat : Type].
-Definition tls3 : tlist ts3 := Hcons nat [1;2;3] Hnil.
+Definition tls3 : tlist ts3 := Hcons nat [1;2] Hnil.
 Definition t : member (nrec F3) C3' := HNext _ _ HFirst.
 Definition s3 := srec ts3 []  F3 (ssum ts3 C3 (one ts3 C3 (HFirst)) 
   (pprod ts3 C3 (singleton ts3 C3 HFirst) 
@@ -348,7 +352,7 @@ Definition Empty : hlist (Species ts3 []) [] := HNil.
 Compute enumerate 20 s3 tls3 Empty. 
 Compute (List.length (enumerate 20 s3 tls3 Empty)).
 
-
+(* end; ignore below *)
 Run TemplateProgram (t <- tmQuoteRec (list nat);; r <- tmEval all t;; tmPrint r).
 
 Run TemplateProgram (t<- (tmQuote (nat -> nat));; t <- tmUnquoteTyped Set t;; tmPrint t).
