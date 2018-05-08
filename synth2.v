@@ -3,7 +3,7 @@ Require Import MSets Arith.
 Require Import Coq.Numbers.NaryFunctions.
 From Template Require Import All.
 Import ListNotations MonadNotation.
-Require Export Coq.Strings.String.
+Require Import Coq.Strings.String.
 Require Import Ascii.
 Extraction Language Haskell.
 Require Import FMaps.
@@ -57,6 +57,9 @@ Definition Id := fun X : Type => X.
 Inductive tlist : list Type -> Type :=
 | Hnil : tlist nil
 | Hcons : forall (T : Type) {TS}, list T -> tlist TS -> tlist (T :: TS).
+
+Notation "<<>>" := Hnil.
+Infix ":+:" := Hcons (right associativity, at level 60).
 
 Check Hcons nat [1;2;3] Hnil.
 
@@ -123,10 +126,33 @@ fun s => fun X k => k ((liftF (rfold F X k)) s).
 Definition rout F `{Functor (F)} : nrec F -> F (nrec F) :=
 rfold F (F (nrec F)) (liftF (rin F )).
 
+Fixpoint arrTy' A (l : list Type) : Type :=
+match l with 
+| [] => A
+| x::xs => x -> (arrTy' A xs)
+end.
+
+Compute arrTy' (list nat) [nat;list nat].
+ 
+Definition arr' A := fun l : list Type => arrTy' A l.
+Check arr'.
+Definition constructor (A : Type) : Type := sigT (arr' A).
+Compute constructor.
+Definition inductive (A : Type) := 
+list (constructor A).
+
+Fixpoint computeS {A} (l : inductive A) : list (list Type) := 
+match l with 
+| [] => []
+| x::xs => 
+  let argT := projT1 x in 
+  argT :: computeS xs
+end.
 
 Section s.
-Variable ts : list Type.
-Inductive Species : list Type -> Type -> Type := 
+ Variable ts : list Type.
+
+ Inductive Species : list Type -> Type -> Type := 
 | zero : forall C, Species C (Empty_set)
 | one :  forall C {x} (m : member x ts), Species C ( unit)
 | singleton :  forall C {x} (m : member x ts), Species C ( tget' _ ts m)
@@ -135,8 +161,15 @@ Inductive Species : list Type -> Type -> Type :=
 | ssum : forall C {F G}, Species C F -> Species C G -> Species C (sum F G)
 | srec : forall C F `{Functor (F)}, Species ((nrec F)::C) (F (nrec F)) -> 
   Species C (nrec F) 
-| svar : forall C F, member F C -> Species C F.
+| svar : forall C F, member F C -> Species C F
+| sind : forall C A (l : inductive A), 
+  hlist (fun c => prod (arr' A (projT1 c)) (hlist (Species (A::C)) (projT1 c : list Type))) l -> Species C A. 
 End s.
+
+Check existT (fun x => x) nat 4.
+Notation "{{ x }}" := (@cons Type (x : Type) nil) : list_scope.
+Notation "{{ x ; y ; .. ; z }}" := (@cons Type (x : Type) (@cons Type (y : Type) .. (@cons Type (z : Type) nil) ..)) : list_scope.
+
 
 
 Fixpoint insertAt A (t : A) (G : list A) (n : nat) {struct n} : list A :=
@@ -161,6 +194,12 @@ match n return member t (insertAt A t' (t''::G'') n) with
 end
 end.
 
+Print ilist.
+
+Check ICons "a" (ICons "b" (ICons "c" INil)).
+
+Definition f := fun t => list t.
+Check hmap.
 Fixpoint lift' k C t' n t (s : Species k C t) : Species k (insertAt _ t' C n) t := 
 match s with 
 | zero _ C => zero _ (insertAt _ t' C n)
@@ -171,6 +210,8 @@ match s with
 | ssum _ C S1 S2 => ssum _ (insertAt _ t' C n) (lift' k C t' n _ S1) (lift' k C t' n _ S2)
 | srec _ C F S' => srec _ (insertAt _ t' C n) F (lift' k _ t' (S n) _ S')
 | svar _ C F x => svar _ _ _ (liftVar _ _ _ x t' n)
+| sind _ C tA indA hll => sind _ (insertAt _ t' C n) tA indA 
+  (hmap (fun l '(c, hl) => (c, hmap (fun x s => lift' k _ t' (S n )x s) hl)) hll )
 end.
 
 Definition lift k C t' t (e : Species k C t) : Species k (t' :: C) t := lift' k C t' O t e.
@@ -186,9 +227,9 @@ match s with
 | ssum _ C S1 S2 => fun s => ssum _ _ (subst C _ S1 _ s) (subst C _ S2 _ s)
 | srec _ _ F S' => fun s => srec _ _ F (subst _ _ S' _ (svar _ (_::C') _ (HFirst) ::: hmap (fun f =>  lift k C' _ f) s))
 | svar _ C F x => fun s => hget s x
+| sind _ C tA indA hll => fun s => sind _ _ tA indA 
+  (hmap (fun l '(c,hl) => (c,hmap (fun x s' => subst _ _ s' _ (svar _ _ _ HFirst ::: hmap (lift k C' _) s) ) hl)) hll)
 end.
-
-Fixpoint convert {n A} (l : ilist A n) : list (fin n) := [].
 
 (*fun tls h => 
   let C'' := nrec ts F :: C' in 
@@ -217,7 +258,97 @@ match tls with
   end) tlspart)
 end.
 
-Check list_prod.
+Fixpoint mapo {A B} (f : A -> list A -> B) (ls : list A) := 
+let mapo := fix k {A B} (f : A -> list A -> B) (l : list A) (r : list A) : list B :=
+match r with
+| [] => []
+| x::xs => 
+  f x (List.app l xs) :: k f (List.app l [x]) xs
+end in
+mapo f [] ls.
+
+Fixpoint npartition (n : nat) {ts} (tls : tlist ts) : list (list (tlist ts)) := 
+match n with
+| 0 => [[tls]]
+| 1 => [[tls]]
+| S n' => 
+  let r := npartition n' tls in 
+  concat (map (fun p => concat (
+    mapo (fun t p' => 
+    let part := partition t in 
+    map (fun '(l,r) => l::r::p') part
+    ) p)
+  ) r)
+end.
+
+(*
+Lemma in_concat_app : forall {A} (x : A) l r, In x (l ++ r) -> (In x l \/ In x r).
+Proof.
+induction l.
+- intros. right. simpl in H. exact H.
+- intros. simpl in H. inversion H.
+  + left. rewrite H0. simpl. left. reflexivity.
+  + pose (IHl _ H0).  inversion o.
+    * left. simpl. right. exact H1.
+    * right.  exact H1.
+Qed.
+
+Theorem in_concat : forall {A} (x : A) ll, In x (concat ll) -> exists l', In l' ll /\ In x l'.
+Proof.
+induction ll.
+- intros. inversion H.
+- intros. simpl in H. pose (in_concat_app _ a (concat ll) H).
+inversion o.
+  + exists a. split. simpl. left. reflexivity. exact H0.
+  + pose (IHll H0). inversion e. exists x0. inversion H1. split.
+    * simpl. right. exact H2.
+    * exact H3. 
+Qed.
+
+Theorem is_n_part : forall (n : nat) {ts} (tls : tlist ts), forall x, In x (npartition n tls) -> List.length x = n.
+Proof.
+intros. generalize dependent x. induction n. 
+- intros. inversion H. 
+- intros. remember (S n). destruct n eqn:E. 
+  + rewrite Heqn0 in H. simpl in H. inversion H. 
+    * rewrite <- H0, Heqn0. reflexivity.
+    * inversion H0.
+  + rewrite Heqn0 in H. simpl npartition in H. remember (match n1 with
+            | 0 => [[tls]]
+            | S _ =>
+                concat
+                  (map
+                     (fun p : list (tlist ts0) =>
+                      concat
+                        (mapo
+                           (fun (t : tlist ts0) (p' : list (tlist ts0)) =>
+                            map (fun '(l, r) => l :: r :: p') (partition t)) p)) (npartition n1 tls))
+            end).
+  remember (concat
+         (map
+            (fun p : list (tlist ts0) =>
+             concat
+               (mapo (fun (t : tlist ts0) (p' : list (tlist ts0)) => map (fun '(l, r) => l :: r :: p') (partition t))
+                  p)) l)).
+  induction l0.
+  * inversion H.
+  * inversion H. remember (map
+             (fun p : list (tlist ts0) =>
+              concat
+                (mapo (fun (t : tlist ts0) (p' : list (tlist ts0)) => map (fun '(l, r) => l :: r :: p') (partition t))
+                   p)) l).
+    rewrite Heql0 in H.
+    pose (in_concat x l1 H). inversion e. inversion H1. rewrite Heql1 in H2. Check in_map_iff.
+    pose (in_map_iff ((fun p : list (tlist ts0) =>
+           concat
+             (mapo (fun (t : tlist ts0) (p' : list (tlist ts0)) => map (fun '(l, r) => l :: r :: p') (partition t)) p))) l x0).
+    inversion i. pose (H4 H2). clear H5.
+    inversion e0. inversion H5.
+    simpl npartition in IHn. rewrite <- Heql in IHn. pose (IHn _ H7).
+admit.
+admit.
+Admitted.*)
+Compute npartition 3 (Hcons string ["a";"b"] Hnil).
 
 (* (x,y) = [x,y) *)
 Definition interval := prod nat nat.
@@ -259,7 +390,7 @@ Compute make_list (H) 5 0.
         | _, _ => nil
       end.
 Definition int_max := 10000.
-Check make_list.
+Print fold_right.
 Fixpoint bound {ts K F} (s : Species ts K F) : list interval := 
 match s with 
 | zero _ _ => tabulate_list (fun _ => (0,0)) (List.length ts)
@@ -270,6 +401,17 @@ match s with
 | ssum _ _ s1 s2 => zip union (bound s1) (bound s2)
 | srec _ _ _  s' => bound s'
 | svar _ _ _ _ => tabulate_list (fun _ => (int_max,int_max)) (List.length ts)
+| sind _ _ _ _ hll => 
+  let add_unit := tabulate_list (fun _ => (0,0)) (List.length ts) in
+  let union_unit :=  tabulate_list (fun _ => (int_max,0)) (List.length ts) in
+  fold_right (zip union) union_unit
+  (hmap1 (fun l '(c,hl) => fold_right (zip iadd) add_unit (hmap1 (fun x s => bound s) hl)) hll)
+end.
+
+Fixpoint tempty {ts} (tls : tlist ts) :=
+match tls with 
+| Hnil => true
+| Hcons _ l tlss => false
 end.
 
 Fixpoint lengths {ts} (tls : tlist ts) :=
@@ -278,7 +420,46 @@ match tls with
 | Hcons _ l tlss => (List.length l) :: lengths tlss
 end.
 
-Check forallb.
+Check tlist.
+Fixpoint empty ts : tlist ts :=
+match ts with 
+| nil => Hnil
+| x::xs => Hcons x [] (empty xs)
+end.
+
+  Fixpoint fromList' {A ts} (ls : list A) (l : list (tlist ts)) : hlist (fun _ => tlist ts) ls := 
+    match ls with 
+    | nil => HNil
+    | _::ys =>  
+      match l with 
+      | nil => HCons (empty ts) (fromList' ys nil)
+      | x::xs => HCons x (fromList' ys xs)
+    end
+    end.
+
+Fixpoint lmerge {ls} (hl : hlist list ls) : list (hlist (fun x => x) ls) :=
+match hl with
+| HNil => [HNil]
+| HCons x xs => 
+  let r := lmerge xs in 
+  concat (map (fun e => map (fun h => e ::: h) r) x)
+end.
+
+Compute (lmerge (HCons [1;2] (HCons ["a";"b";"c"] HNil))).
+
+Fixpoint napply {A} (args : list Type) (c : arr' A args) (hl : hlist (fun x => x) args) : A.
+destruct args eqn:e.
+- simpl in c.  exact c.
+- simpl in c. inversion hl. 
+  pose (c X). exact (napply A l a X0).
+Defined.
+
+Fixpoint collapse {A: Type} {ls} (hl : hlist (fun _ : {x : list Type & arr' A x} => list (list A)) ls) : list A := 
+match hl with 
+| HNil => []
+| HCons x xs => concat x ++ collapse xs
+end.
+
 Definition enumerate (n : nat) {ts : list Type} {F} {K} (s : Species ts K F) : 
 forall tls : tlist ts, hlist (Species ts K) K -> list (F). 
 refine(
@@ -312,7 +493,24 @@ match s in Species _ KK F return forall (s : Species _ KK F) (tls : tlist ts), h
   let sb := combine bounds sizes in 
   if forallb inside sb then _
   else []
-| svar _ _ F v => fun _ tst _ => []
+| svar _ _ F v => fun _ tls _ => []
+| sind _ C' tA indA hll =>  fun s'' tls h => 
+  let C'' := tA :: C' in
+  let hll' :=  hmap (fun l '(c,hl) => (c,hmap (fun _ s' => subst C'' _ s' C' (HCons s'' h)) hl)) hll in 
+  let As := hmap (fun args '(c,hl) => 
+    let l := projT1 args in
+    let cstr := projT2 args in 
+    let parts := npartition (List.length l) tls in 
+    let As := map (fun part => 
+      let hpart := fromList' l part in 
+      let all := zipH (fun _ s' p => enum n' s' p h) hl hpart in 
+      let merged := lmerge all in 
+      let finals := map (fun hl => napply _ cstr hl) merged in 
+      finals
+    ) parts in 
+    As
+  ) hll' in
+  _
 end s
 end) n ts F K s).
 - exact h.
@@ -326,14 +524,56 @@ end) n ts F K s).
   pose (s'' := subst C'' _ s' C' (HCons s1 h)).
   pose (r := enum n' _ _ _  s'' tls h).
   exact (map (rin _  ) r).
+- exact (collapse As). 
 Defined.
 
 Extraction Language Ocaml.
 
+Definition re_listnat : inductive (list nat ):= [
+  existT (arr' (list nat)) [] (nil);
+  existT (arr' (list nat)) {{nat; list nat}} (cons)
+].
+
+Definition ts : list Type := [nat : Type].
+Definition C : list Type := [list nat : Type].
+Definition AA := list nat : Type.
+
+Compute arr' AA (projT1 (existT (arr' (list nat)) {{nat; list nat}} (cons))).
+
+Definition a1 := 
+  (cons : arr' AA (projT1 (existT (arr' (list nat)) {{nat; list nat}} (cons))), HCons (singleton ts C HFirst) (HCons (svar ts C _ HFirst) HNil)).
+Definition a2 := (nil, HNil) : (arr' AA (projT1 (existT (arr' (list nat)) [] (nil)))) * hlist (Species ts C) [].
+
+Definition a3  := a2 ::: a1 ::: HNil :  
+  hlist (fun c => prod (arr' AA (projT1 c)) (hlist (Species ts ({{AA}})) (projT1 c : list Type))) 
+  re_listnat.
+Check a3.
+
+Definition natlist_s  := 
+sind ts [] (list nat) re_listnat a3.
+Definition tls0 : tlist ts := Hcons nat [1;2;3;4] Hnil.
+
+Definition hll' :=  hmap (fun l '(c,hl) => (c,hmap (fun _ s' => subst C _ s' [] (HCons natlist_s HNil)) hl)) a3.
+Compute a3.
+Compute hll'.
+Definition part1 := nth 1 (npartition 0 tls0) [].
+Definition hpart := fromList' ([] : list Type) part1.
+Definition ctx : hlist (Species ts C) C := HCons (svar ts C  _ HFirst) HNil.
+Definition all := zipH (fun _ s' p => enumerate 30 s' p ctx) (snd a2) hpart.
+Definition merged := lmerge all.
+Definition finals := map (fun hl => napply _ (nil : arr' AA (projT1 (existT (arr' (list nat)) [] (nil)))) hl) merged.
+Compute part1.
+Compute hpart.
+Compute all.
+Compute merged.
+Compute finals.
+
+Compute enumerate 20 natlist_s tls0 HNil.
+
 
 (* lists *)
 
-Definition ts : list Type := [nat : Type].
+Definition ts0 : list Type := [nat : Type].
 Definition F1 := (fun X => sum unit (prod (tget' _ ts HFirst) X)).
 Instance F1F : Functor F1 := 
 {
@@ -348,15 +588,10 @@ Definition s := srec ts []  F1 (ssum ts C1 (one ts C1 HFirst) (pprod ts C1 (sing
 Definition tls : tlist ts := Hcons nat [1;2;3] Hnil.
 Definition C0 : hlist (Species ts []) [] := HNil.
 
-Definition e := enumerate 1000 s tls C0.
-Parameter int : Type. (* This is the Ocaml int type. *)
-Extract Inlined Constant int => "int". (* so, extract it that way! *)
-Parameter ltb: int -> int -> bool. (* This is the Ocaml (<) operator. *)
-Extract Inlined Constant ltb => "(<)". (* so, extract it that way! *)
+Definition e := enumerate 20 s tls C0.
+Compute e.
 
-Parameter int2Z: int -> nat.
-Axiom ltb_lt : forall n m : int, ltb n m = true <-> int2Z n < int2Z m.
-
+Compute npartition 2 (Hcons string ["a";"b"] tls).
 Compute bound s.
 Compute e.
 
@@ -432,7 +667,7 @@ Definition s3 := srec ts3 []  F3 (ssum ts3 C3 (one ts3 C3 (HFirst))
 
 Definition Empty : hlist (Species ts3 []) [] := HNil.
 
-Check enumerate 20 s3 tls3 Empty. 
+Compute enumerate 20 s3 tls3 Empty. 
 
 Extraction "enum.ml" e.
 

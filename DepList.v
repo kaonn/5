@@ -32,6 +32,7 @@
 (* Dependent list types presented in Chapter 9 *)
 
 Require Import Arith List CpdtTactics.
+Import ListNotations.
 
 Set Implicit Arguments.
 Set Asymmetric Patterns.
@@ -60,6 +61,20 @@ Section ilist.
       | INil => tt
       | ICons _ _ ls' => ls'
     end.
+
+  Fixpoint iapp {n m} (l : ilist n) : ilist m -> ilist (n + m).
+  refine(  
+  match l with 
+  | INil => fun l' => _
+  | ICons _ x xs => fun l' => _
+  end).
+  - simpl. exact l'.
+  - simpl. 
+    pose (iapp _ _ xs l').
+    exact (ICons x i).
+  Defined.
+
+Check List.app.
 
   Inductive fin : nat -> Set :=
   | First : forall n, fin (S n)
@@ -230,10 +245,11 @@ Infix ":::" := HCons (right associativity, at level 60).
 Infix "+++" := happ (right associativity, at level 60).
 
 Section hmap.
-  Variable A : Type.
+  Variable A C : Type.
   Variables B1 B2 : A -> Type.
 
   Variable f : forall x, B1 x -> B2 x.
+  Variable f1 : forall x, B1 x -> C.
 
   Fixpoint hmap (ls : list A) (hl : hlist B1 ls) : hlist B2 ls :=
     match hl with
@@ -241,9 +257,57 @@ Section hmap.
       | HCons _ _ x hl' => f x ::: hmap hl'
     end.
 
+  Fixpoint hmap1 (ls : list A) (hl : hlist B1 ls) : list C  :=  
+    match hl with 
+    | HNil => nil
+    | HCons _ _ x hl' => f1 x :: hmap1 hl'
+    end.
+
+  Fixpoint zipH {B3} (ls : list A) (f : forall x, B1 x -> B2 x -> B3 x) 
+    (l : hlist B1 ls) {struct l} : hlist B2 ls -> hlist B3 ls := 
+    match l with 
+    | HNil => fun _ => HNil
+    | HCons _ _ x xs => fun hl => 
+      match hl in hlist _ l' return
+      match l' with 
+      | nil => unit
+      | x::xs => B1 x -> (hlist B2 xs -> hlist B3 xs) -> hlist B3 l' end with 
+      | HNil => tt
+      | HCons _ _ x' hl' => fun x r => f _ x x' ::: r hl'
+      end x (zipH f xs)
+    end.
+
+  Fixpoint fromList (ls : list A) (l : list (list C)) : hlist (fun _ => list C) ls := 
+    match ls with 
+    | nil => HNil
+    | _::ys =>  
+      match l with 
+      | nil => HCons nil (fromList ys nil)
+      | x::xs => HCons x (fromList ys xs)
+    end
+    end.
+
+  Fixpoint zipL (ls : list A) (f2 : C -> forall x, B1 x -> B2 x) (l1 : hlist B1 ls) {struct l1}: 
+  forall l2 : list C, length l2 = length ls -> hlist B2 ls.
+  refine(
+  match l1 in hlist _ l' return forall l2 : list C, length l2 = length l' -> hlist B2 l' with 
+  | HNil => fun _ _ => HNil
+  | HCons _ _ x xs => fun l2 p => _
+  end).
+  - destruct l2 eqn:e.
+  + inversion p.
+  + pose (f2 c a x).
+    inversion p.
+    pose (zipL _ f2 xs l0 H0).
+    apply HCons. * exact b. * exact h.
+  Defined.
+
   Theorem hmap_happ : forall ls2 (h2 : hlist B1 ls2) ls1 (h1 : hlist B1 ls1),
     hmap h1 +++ hmap h2 = hmap (h1 +++ h2).
-    induction h1; crush.
+  Proof.
+    induction h1. 
+    - simpl. reflexivity.
+    - simpl. rewrite IHh1. reflexivity.
   Qed.
 
   Theorem hget_hmap : forall elm ls (hls : hlist B1 ls) (m : member elm ls),
